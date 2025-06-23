@@ -6,7 +6,7 @@ require (
 	github.com/mark3labs/mcp-go v0.31.0
 	helm.sh/helm/v3 v3.18.2
 	k8s.io/api v0.33.1
-	k8s.io/apimachinery v0.33.1
+	k8s.io/apimachinery v0.33.2
 	k8s.io/client-go v0.33.1
 )
 
