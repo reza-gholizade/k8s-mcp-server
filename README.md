@@ -95,6 +95,129 @@ The server will be available at `http://localhost:8080/mcp` (or your specified p
 
 If no mode is specified, it defaults to SSE on port 8080.
 
+### Kubernetes Authentication
+
+The server supports multiple authentication methods, which are tried in the following order of priority:
+
+#### 1. Kubeconfig Content from Environment Variable
+
+You can provide the entire kubeconfig file content via the `KUBECONFIG_DATA` environment variable:
+
+```bash
+export KUBECONFIG_DATA="$(cat ~/.kube/config)"
+./k8s-mcp-server
+```
+
+This is useful when you want to avoid mounting files or when running in environments where file access is restricted.
+
+#### 2. API Server URL and Token
+
+You can authenticate using a Kubernetes API server URL and bearer token:
+
+```bash
+export KUBERNETES_SERVER="https://kubernetes.example.com:6443"
+export KUBERNETES_TOKEN="your-bearer-token-here"
+./k8s-mcp-server
+```
+
+Optional environment variables for TLS configuration:
+- `KUBERNETES_CA_CERT`: CA certificate content (base64-encoded or PEM format)
+- `KUBERNETES_CA_CERT_PATH`: Path to CA certificate file
+- `KUBERNETES_INSECURE`: Set to `"true"` to skip TLS verification (not recommended for production)
+
+Example with CA certificate:
+```bash
+export KUBERNETES_SERVER="https://kubernetes.example.com:6443"
+export KUBERNETES_TOKEN="your-bearer-token-here"
+export KUBERNETES_CA_CERT_PATH="/path/to/ca.crt"
+./k8s-mcp-server
+```
+
+#### 3. In-Cluster Authentication (Service Account)
+
+When running inside a Kubernetes cluster, the server automatically detects and uses the service account token from `/var/run/secrets/kubernetes.io/serviceaccount/token`. This is the recommended method for running the server as a pod within a cluster.
+
+**Example Deployment:**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-mcp-server-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-mcp-server-role
+rules:
+  - apiGroups: [""]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Add more rules as needed for your use case
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-mcp-server-rb
+subjects:
+  - kind: ServiceAccount
+    name: k8s-mcp-server-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: k8s-mcp-server-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-mcp-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-mcp-server
+  template:
+    metadata:
+      labels:
+        app: k8s-mcp-server
+    spec:
+      serviceAccountName: k8s-mcp-server-sa
+      containers:
+        - name: k8s-mcp-server
+          image: ginnux/k8s-mcp-server:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVER_MODE
+              value: "sse"
+            - name: SERVER_PORT
+              value: "8080"
+```
+
+#### 4. Kubeconfig File Path (Default)
+
+If none of the above methods are available, the server falls back to using a kubeconfig file:
+
+- Uses the path provided via `--kubeconfig` flag (if implemented) or `KUBECONFIG` environment variable
+- Defaults to `~/.kube/config` if neither is specified
+
+```bash
+# Using default ~/.kube/config
+./k8s-mcp-server
+
+# Using custom kubeconfig path
+export KUBECONFIG=/path/to/your/kubeconfig
+./k8s-mcp-server
+```
+
+**Note:** The server automatically detects which authentication method to use based on the available environment variables and file system. You don't need to explicitly configure the authentication method - it will use the first available method in the priority order listed above.
+
 #### Read-Only Mode
 
 The server supports a read-only mode that disables all write operations, providing a safer way to explore and monitor your Kubernetes cluster without the risk of making changes.
@@ -177,6 +300,8 @@ You can also run the server using the pre-built Docker image from Docker Hub.
 
 2.  **Run the container:**
 
+    **Note:** The server supports multiple authentication methods. You can either mount a kubeconfig file (as shown below) or use environment variables for authentication (see [Kubernetes Authentication](#kubernetes-authentication) section above).
+
     *   **SSE Mode (default behavior of the image):**
         ```bash
         docker run -p 8080:8080 -v ~/.kube/config:/home/appuser/.kube/config:ro ginnux/k8s-mcp-server:latest
@@ -210,9 +335,27 @@ You can also run the server using the pre-built Docker image from Docker Hub.
         docker run -p 8080:8080 -v ~/.kube:/home/appuser/.kube:ro ginnux/k8s-mcp-server:latest
         ```
 
+    *   **Using environment variables for authentication (no file mounting required):**
+        ```bash
+        # Using kubeconfig content from environment variable
+        docker run -p 8080:8080 \
+          -e KUBECONFIG_DATA="$(cat ~/.kube/config)" \
+          ginnux/k8s-mcp-server:latest
+
+        # Or using API server URL and token
+        docker run -p 8080:8080 \
+          -e KUBERNETES_SERVER="https://kubernetes.example.com:6443" \
+          -e KUBERNETES_TOKEN="your-token-here" \
+          -e KUBERNETES_CA_CERT_PATH="/path/to/ca.crt" \
+          -v /path/to/ca.crt:/path/to/ca.crt:ro \
+          ginnux/k8s-mcp-server:latest
+        ```
+
 #### Using with Docker Compose
 
 Create a `docker-compose.yml` file:
+
+**Option 1: Using kubeconfig file (traditional method):**
 ```yaml
 version: '3.8'
 services:
@@ -235,15 +378,34 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    # To run in stdio mode with docker-compose, you might need to adjust 'ports',
-    # add 'stdin_open: true' and 'tty: true', and potentially override the command.
-    # For example, to force stdio mode:
-    # command: ["--mode", "stdio"]
-    # stdin_open: true
-    # tty: true
-    # For streamable-http mode, simply change SERVER_MODE to 'streamable-http'
 ```
-To enable read-only mode, use the `command` override as shown above.
+
+**Option 2: Using environment variables (no file mounting):**
+```yaml
+version: '3.8'
+services:
+  k8s-mcp-server:
+    image: ginnux/k8s-mcp-server:latest
+    container_name: k8s-mcp-server
+    ports:
+      - "8080:8080"
+    environment:
+      - KUBECONFIG_DATA=${KUBECONFIG_DATA} # Set this in your .env file or shell
+      # Or use API server and token:
+      # - KUBERNETES_SERVER=https://kubernetes.example.com:6443
+      # - KUBERNETES_TOKEN=${KUBERNETES_TOKEN}
+      - SERVER_MODE=sse
+      - SERVER_PORT=8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+```
+
+**Note:** To enable read-only mode, use the `command` override as shown in Option 1. For stdio mode, you might need to adjust 'ports', add 'stdin_open: true' and 'tty: true', and potentially override the command.
 
 Then start with:
 ```bash

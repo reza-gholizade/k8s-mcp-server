@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,14 +44,76 @@ type Client struct {
 	cacheLock        sync.RWMutex
 }
 
-// NewClient creates a new Kubernetes client.
-// It initializes the standard clientset, dynamic client, discovery client,
-// and metrics client using the provided kubeconfig path or the default path.
-// If kubeconfigPath is empty, it defaults to ~/.kube/config.
-func NewClient(kubeconfigPath string) (*Client, error) {
+// BuildKubernetesConfig builds a Kubernetes REST config using multiple authentication methods.
+// It supports the following methods in order of priority:
+// 1. Kubeconfig content from KUBECONFIG_DATA environment variable
+// 2. API server URL and token from KUBERNETES_SERVER and KUBERNETES_TOKEN environment variables
+// 3. In-cluster authentication (service account token from /var/run/secrets/kubernetes.io/serviceaccount/token)
+// 4. Kubeconfig file path (provided or default ~/.kube/config)
+func BuildKubernetesConfig(kubeconfigPath string) (*rest.Config, error) {
+	// Method 1: Kubeconfig content from environment variable
+	if kubeconfigData := os.Getenv("KUBECONFIG_DATA"); kubeconfigData != "" {
+		// Load kubeconfig from bytes
+		configObj, err := clientcmd.Load([]byte(kubeconfigData))
+		if err != nil {
+			return nil, fmt.Errorf("failed to load kubeconfig from KUBECONFIG_DATA: %w", err)
+		}
+		// Build REST config from the loaded config
+		clientConfig := clientcmd.NewDefaultClientConfig(*configObj, &clientcmd.ConfigOverrides{})
+		config, err := clientConfig.ClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build REST config from KUBECONFIG_DATA: %w", err)
+		}
+		return config, nil
+	}
+
+	// Method 2: API server URL and token from environment variables
+	if serverURL := os.Getenv("KUBERNETES_SERVER"); serverURL != "" {
+		token := os.Getenv("KUBERNETES_TOKEN")
+		if token == "" {
+			return nil, fmt.Errorf("KUBERNETES_TOKEN environment variable is required when KUBERNETES_SERVER is set")
+		}
+
+		config := &rest.Config{
+			Host:        serverURL,
+			BearerToken: token,
+			TLSClientConfig: rest.TLSClientConfig{
+				Insecure: os.Getenv("KUBERNETES_INSECURE") == "true",
+			},
+		}
+
+		// Set CA certificate if provided
+		if caCert := os.Getenv("KUBERNETES_CA_CERT"); caCert != "" {
+			config.TLSClientConfig.CAData = []byte(caCert)
+		} else if caCertPath := os.Getenv("KUBERNETES_CA_CERT_PATH"); caCertPath != "" {
+			caCertData, err := os.ReadFile(caCertPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read CA certificate from %s: %w", caCertPath, err)
+			}
+			config.TLSClientConfig.CAData = caCertData
+		}
+
+		return config, nil
+	}
+
+	// Method 3: In-cluster authentication (service account token)
+	// Check if we're running inside a Kubernetes cluster
+	serviceAccountTokenPath := "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	if _, err := os.Stat(serviceAccountTokenPath); err == nil {
+		// We're in a cluster, use in-cluster config
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create in-cluster config: %w", err)
+		}
+		return config, nil
+	}
+
+	// Method 4: Kubeconfig file path (provided or default)
 	var kubeconfig string
 	if kubeconfigPath != "" {
 		kubeconfig = kubeconfigPath
+	} else if kubeconfigEnv := os.Getenv("KUBECONFIG"); kubeconfigEnv != "" {
+		kubeconfig = kubeconfigEnv
 	} else if home := homedir.HomeDir(); home != "" {
 		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
@@ -58,6 +121,23 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes configuration: %w", err)
+	}
+
+	return config, nil
+}
+
+// NewClient creates a new Kubernetes client.
+// It initializes the standard clientset, dynamic client, discovery client,
+// and metrics client using multiple authentication methods:
+// 1. Kubeconfig content from KUBECONFIG_DATA environment variable
+// 2. API server URL and token from KUBERNETES_SERVER and KUBERNETES_TOKEN environment variables
+// 3. In-cluster authentication (service account token)
+// 4. Kubeconfig file path (provided or default ~/.kube/config)
+// If kubeconfigPath is empty, it will try to auto-detect the authentication method.
+func NewClient(kubeconfigPath string) (*Client, error) {
+	config, err := BuildKubernetesConfig(kubeconfigPath)
+	if err != nil {
+		return nil, err
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -295,8 +375,17 @@ func (c *Client) CreateOrUpdateResourceYAML(ctx context.Context, namespace, yaml
 		return nil, fmt.Errorf("failed to parse converted JSON from YAML manifest: %w", err)
 	}
 
+	// Infer kind from manifest if not provided
+	resourceKind := kind
+	if resourceKind == "" {
+		resourceKind = obj.GetKind()
+		if resourceKind == "" {
+			return nil, fmt.Errorf("resource kind is required: either provide it as a parameter or include it in the YAML manifest")
+		}
+	}
+
 	// Determine the resource GVR
-	gvr, err := c.getCachedGVR(kind)
+	gvr, err := c.getCachedGVR(resourceKind)
 	if err != nil {
 		return nil, err
 	}

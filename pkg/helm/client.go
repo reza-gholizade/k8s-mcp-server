@@ -10,50 +10,119 @@ import (
 	"helm.sh/helm/v3/pkg/registry"
 	"helm.sh/helm/v3/pkg/release"
 	"helm.sh/helm/v3/pkg/repo"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/reza-gholizade/k8s-mcp-server/pkg/k8s"
 )
 
 // Client wraps Helm operations
 type Client struct {
-	settings   *cli.EnvSettings
-	restConfig *rest.Config
-	k8sClient  kubernetes.Interface
+	settings         *cli.EnvSettings
+	restConfig       *rest.Config
+	k8sClient        kubernetes.Interface
+	restClientGetter genericclioptions.RESTClientGetter
 }
 
-// NewClient creates a new Helm client
+// customRESTClientGetter is a custom RESTClientGetter that uses a pre-built rest.Config
+// instead of reading from kubeconfig files. This ensures Helm uses the same authentication
+// method that was used to build the restConfig (KUBECONFIG_DATA, KUBERNETES_SERVER/TOKEN, etc.)
+type customRESTClientGetter struct {
+	restConfig *rest.Config
+}
+
+// ToRESTConfig returns the pre-built REST config
+func (g *customRESTClientGetter) ToRESTConfig() (*rest.Config, error) {
+	return g.restConfig, nil
+}
+
+// ToRawKubeConfigLoader returns a clientcmd.ClientConfig that uses the pre-built config
+func (g *customRESTClientGetter) ToRawKubeConfigLoader() clientcmd.ClientConfig {
+	return &customClientConfig{restConfig: g.restConfig}
+}
+
+// ToDiscoveryClient returns a discovery client using the pre-built REST config
+func (g *customRESTClientGetter) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, error) {
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(g.restConfig)
+	if err != nil {
+		return nil, err
+	}
+	return memory.NewMemCacheClient(discoveryClient), nil
+}
+
+// ToRESTMapper returns a REST mapper using the discovery client
+func (g *customRESTClientGetter) ToRESTMapper() (meta.RESTMapper, error) {
+	discoveryClient, err := g.ToDiscoveryClient()
+	if err != nil {
+		return nil, err
+	}
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
+	expander := restmapper.NewShortcutExpander(mapper, discoveryClient, nil)
+	return expander, nil
+}
+
+// customClientConfig implements clientcmd.ClientConfig interface
+type customClientConfig struct {
+	restConfig *rest.Config
+}
+
+// RawConfig returns an empty api.Config since we're using a direct rest.Config
+func (c *customClientConfig) RawConfig() (api.Config, error) {
+	return api.Config{}, fmt.Errorf("raw config not available when using direct REST config")
+}
+
+// ClientConfig returns the pre-built REST config
+func (c *customClientConfig) ClientConfig() (*rest.Config, error) {
+	return c.restConfig, nil
+}
+
+// Namespace returns the default namespace from the config
+func (c *customClientConfig) Namespace() (string, bool, error) {
+	return "default", false, nil
+}
+
+// ConfigAccess returns nil as we don't use file-based config access
+func (c *customClientConfig) ConfigAccess() clientcmd.ConfigAccess {
+	return nil
+}
+
+// NewClient creates a new Helm client.
+// It uses the same authentication methods as the Kubernetes client:
+// 1. Kubeconfig content from KUBECONFIG_DATA environment variable
+// 2. API server URL and token from KUBERNETES_SERVER and KUBERNETES_TOKEN environment variables
+// 3. In-cluster authentication (service account token)
+// 4. Kubeconfig file path (provided or default ~/.kube/config)
 func NewClient(kubeconfig string) (*Client, error) {
 	settings := cli.New()
 
-	if kubeconfig != "" {
-		settings.KubeConfig = kubeconfig
-	}
-
-	// Get Kubernetes REST config
-	var restConfig *rest.Config
-	var err error
-
-	if settings.KubeConfig != "" {
-		restConfig, err = clientcmd.BuildConfigFromFlags("", settings.KubeConfig)
-	} else {
-		// Try to use the default kubeconfig path first
-		if home := os.Getenv("HOME"); home != "" {
-			defaultKubeconfig := filepath.Join(home, ".kube", "config")
-			if _, err := os.Stat(defaultKubeconfig); err == nil {
-				restConfig, err = clientcmd.BuildConfigFromFlags("", defaultKubeconfig)
-			} else {
-				restConfig, err = rest.InClusterConfig()
-			}
-		} else {
-			restConfig, err = rest.InClusterConfig()
-		}
-	}
+	// Get Kubernetes REST config using the shared config builder
+	restConfig, err := k8s.BuildKubernetesConfig(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Kubernetes config: %w", err)
+	}
+
+	// Create a custom RESTClientGetter that uses our pre-built restConfig
+	// This ensures Helm uses the same authentication method (KUBECONFIG_DATA, 
+	// KUBERNETES_SERVER/TOKEN, in-cluster, etc.) instead of trying to read from
+	// settings.KubeConfig which may not be set or may point to a different config.
+	restClientGetter := &customRESTClientGetter{restConfig: restConfig}
+
+	// Set kubeconfig path in settings if provided (for Helm's internal use in other contexts)
+	// Note: This is mainly for compatibility, but Helm operations will use restClientGetter
+	if kubeconfig != "" {
+		settings.KubeConfig = kubeconfig
+	} else if kubeconfigEnv := os.Getenv("KUBECONFIG"); kubeconfigEnv != "" {
+		settings.KubeConfig = kubeconfigEnv
 	}
 
 	// Create Kubernetes client
@@ -63,15 +132,16 @@ func NewClient(kubeconfig string) (*Client, error) {
 	}
 
 	return &Client{
-		settings:   settings,
-		restConfig: restConfig,
-		k8sClient:  k8sClient,
+		settings:         settings,
+		restConfig:       restConfig,
+		k8sClient:        k8sClient,
+		restClientGetter: restClientGetter,
 	}, nil
 }
 
 func (c *Client) InstallChart(ctx context.Context, namespace, releaseName, chartName, repoURL string, values map[string]interface{}) (*release.Release, error) {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize action config: %w", err)
 	}
 
@@ -121,7 +191,7 @@ func (c *Client) InstallChart(ctx context.Context, namespace, releaseName, chart
 
 func (c *Client) UpgradeChart(ctx context.Context, namespace, releaseName, chartName string, values map[string]interface{}) (*release.Release, error) {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize action config: %w", err)
 	}
 
@@ -164,7 +234,7 @@ func (c *Client) UpgradeChart(ctx context.Context, namespace, releaseName, chart
 // UninstallChart uninstalls a Helm release
 func (c *Client) UninstallChart(ctx context.Context, namespace, releaseName string) error {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return fmt.Errorf("failed to initialize action config: %w", err)
 	}
 
@@ -179,7 +249,7 @@ func (c *Client) UninstallChart(ctx context.Context, namespace, releaseName stri
 
 func (c *Client) ListReleases(ctx context.Context, namespace string) ([]*release.Release, error) {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize action config: %w", err)
 	}
 
@@ -207,7 +277,7 @@ func (c *Client) ListReleases(ctx context.Context, namespace string) ([]*release
 
 func (c *Client) GetRelease(ctx context.Context, namespace, releaseName string) (*release.Release, error) {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize action config: %w", err)
 	}
 
@@ -222,7 +292,7 @@ func (c *Client) GetRelease(ctx context.Context, namespace, releaseName string) 
 
 func (c *Client) GetReleaseHistory(ctx context.Context, namespace, releaseName string) ([]*release.Release, error) {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize action config: %w", err)
 	}
 
@@ -238,7 +308,7 @@ func (c *Client) GetReleaseHistory(ctx context.Context, namespace, releaseName s
 // RollbackRelease rolls back a Helm release
 func (c *Client) RollbackRelease(ctx context.Context, namespace, releaseName string, revision int) error {
 	actionConfig := &action.Configuration{}
-	if err := actionConfig.Init(c.settings.RESTClientGetter(), namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return fmt.Errorf("failed to initialize action config: %w", err)
 	}
 

@@ -12,9 +12,31 @@ services:
     ports:
       - "8080:8080" # Adjust host port if SERVER_PORT is different and you want to map it
     volumes:
-      - ${HOME}/.kube:/root/.kube:ro # Mount kubeconfig as read-only
+      # Option 1: Mount kubeconfig file (traditional method)
+      - ${HOME}/.kube:/home/appuser/.kube:ro # Mount kubeconfig as read-only to non-root user home
+      # Option 2: If using KUBERNETES_CA_CERT_PATH, mount the CA certificate file
+      # - /path/to/ca.crt:/path/to/ca.crt:ro
     environment:
-      - KUBECONFIG=/root/.kube/config
+      # Authentication Method 1: Kubeconfig file (default when volume is mounted)
+      - KUBECONFIG=/home/appuser/.kube/config
+      
+      # Authentication Method 2: Kubeconfig content from environment variable
+      # Uncomment and set this to use kubeconfig content instead of mounting a file
+      # - KUBECONFIG_DATA=${KUBECONFIG_DATA}
+      
+      # Authentication Method 3: API Server URL and Token
+      # Uncomment these to authenticate using API server URL and token
+      # - KUBERNETES_SERVER=https://kubernetes.example.com:6443
+      # - KUBERNETES_TOKEN=${KUBERNETES_TOKEN}
+      # Optional: CA certificate (use either KUBERNETES_CA_CERT or KUBERNETES_CA_CERT_PATH)
+      # - KUBERNETES_CA_CERT=${KUBERNETES_CA_CERT}  # CA certificate content
+      # - KUBERNETES_CA_CERT_PATH=/path/to/ca.crt   # Path to CA certificate file
+      # - KUBERNETES_INSECURE=false                 # Set to "true" to skip TLS verification (not recommended)
+      
+      # Note: Authentication Method 4 (In-cluster) is automatically detected when running in Kubernetes
+      # No environment variables needed - the server will use the service account token
+      
+      # Server configuration
       - SERVER_MODE=sse # Explicitly set server mode (stdio, sse, or streamable-http)
       - SERVER_PORT=8080 # Explicitly set server port for SSE mode
     # command: ["--read-only"] # Uncomment to enable read-only mode
