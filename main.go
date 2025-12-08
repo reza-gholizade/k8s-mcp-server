@@ -120,7 +120,6 @@ func main() {
 	// Start server based on mode
 	switch mode {
 	case "stdio":
-		fmt.Println("Starting server in stdio mode...")
 		if err := server.ServeStdio(s); err != nil {
 			fmt.Printf("Failed to start stdio server: %v\n", err)
 			return
