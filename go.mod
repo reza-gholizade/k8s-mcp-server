@@ -5,7 +5,7 @@ go 1.24.1
 toolchain go1.24.6
 
 require (
-	github.com/mark3labs/mcp-go v0.43.1
+	github.com/mark3labs/mcp-go v0.43.2
 	helm.sh/helm/v3 v3.19.2
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
