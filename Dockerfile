@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -ldflags="-w -s" -o k8s-mcp-server main.go
 
 # Use a minimal base image instead of scratch for better compatibility
-FROM alpine:latest
+FROM alpine:3.21
 
 # Install ca-certificates and curl for health checks
 RUN apk --no-cache add ca-certificates curl
