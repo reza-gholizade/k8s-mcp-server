@@ -2,6 +2,10 @@
 
 A Kubernetes Model Context Protocol (MCP) server that provides tools for interacting with Kubernetes clusters through a standardized interface.
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/reza-gholizade-k8s-mcp-server).
+
 ## Features
 
 - **API Resource Discovery**: Get all available API resources in your Kubernetes cluster.
