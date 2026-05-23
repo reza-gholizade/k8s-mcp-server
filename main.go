@@ -46,9 +46,9 @@ func main() {
 	}
 
 	// Log read-only mode status
-	if readOnly {
-		fmt.Println("Starting server in read-only mode - write operations disabled")
-	}
+//	if readOnly {
+//		fmt.Println("Starting server in read-only mode - write operations disabled")
+//	}
 
 	// Log disabled tool categories
 	if noK8s {
