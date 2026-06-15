@@ -6,7 +6,7 @@ require (
 	github.com/mark3labs/mcp-go v0.54.1
 	helm.sh/helm/v3 v3.21.0
 	k8s.io/api v0.35.4
-	k8s.io/apimachinery v0.36.1
+	k8s.io/apimachinery v0.36.2
 	k8s.io/cli-runtime v0.35.4
 	k8s.io/client-go v0.35.4
 	k8s.io/metrics v0.35.4
