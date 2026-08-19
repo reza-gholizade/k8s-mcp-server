@@ -25,7 +25,7 @@ ARG TARGETARCH
 
 # Build the Go app with cross-compilation support
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
-    go build -ldflags="-w -s" -o k8s-mcp-server main.go
+    go build -ldflags="-w -s" -o k8s-mcp-server .
 
 # Use a minimal base image instead of scratch for better compatibility
 FROM alpine:3.21
@@ -49,13 +49,9 @@ USER appuser
 # Expose the port the app runs on
 EXPOSE 8080
 
-# Set default environment variables
-ENV SERVER_MODE=sse
+# Default to the local-process transport. HTTP modes require explicit opt-in.
+ENV SERVER_MODE=stdio
 ENV SERVER_PORT=8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/ || exit 1
 
 # Command to run the executable
 ENTRYPOINT ["/usr/local/bin/k8s-mcp-server"]
