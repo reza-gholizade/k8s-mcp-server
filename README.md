@@ -44,7 +44,7 @@ A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/reza-g
 
 3.  **Build the server:**
     ```bash
-    go build -o k8s-mcp-server main.go
+    go build -o k8s-mcp-server .
     ```
 
 ## Usage
@@ -67,37 +67,45 @@ SERVER_MODE=stdio ./k8s-mcp-server
 #### SSE Mode (for web applications)
 This mode starts an HTTP server with Server-Sent Events support.
 
-Default (port 8080):
+HTTP transports require a bearer token and listen on loopback by default:
+
 ```bash
-./k8s-mcp-server --mode sse
+MCP_AUTH_TOKEN="$(openssl rand -hex 32)" ./k8s-mcp-server --mode sse
 ```
 Specify a port:
 ```bash
-./k8s-mcp-server --mode sse --port 9090
+MCP_AUTH_TOKEN="your-random-secret" ./k8s-mcp-server --mode sse --port 9090
 ```
 Or using environment variables:
 ```bash
-SERVER_MODE=sse SERVER_PORT=9090 ./k8s-mcp-server
+SERVER_MODE=sse SERVER_PORT=9090 MCP_AUTH_TOKEN="your-random-secret" ./k8s-mcp-server
 ```
 #### Streamable-HTTP Mode (for web applications)
 This mode starts an HTTP server with streamable-http transport support, following the MCP specification.
 
 Default (port 8080):
 ```bash
-./k8s-mcp-server --mode streamable-http
+MCP_AUTH_TOKEN="your-random-secret" ./k8s-mcp-server --mode streamable-http
 ```
 Specify a port:
 ```bash
-./k8s-mcp-server --mode streamable-http --port 9090
+MCP_AUTH_TOKEN="your-random-secret" ./k8s-mcp-server --mode streamable-http --port 9090
 ```
 Or using environment variables:
 ```bash
-SERVER_MODE=streamable-http SERVER_PORT=9090 ./k8s-mcp-server
+SERVER_MODE=streamable-http SERVER_PORT=9090 MCP_AUTH_TOKEN="your-random-secret" ./k8s-mcp-server
 ```
 
 The server will be available at `http://localhost:8080/mcp` (or your specified port).
 
-If no mode is specified, it defaults to SSE on port 8080.
+If no mode is specified, the server defaults to `stdio`. HTTP modes bind to
+`127.0.0.1` by default. Set `SERVER_HOST=0.0.0.0` (or `--host 0.0.0.0`) only
+when network access is intentional, and send `Authorization: Bearer <token>`
+on every MCP request. Browser clients must also be explicitly allowed with a
+comma-separated `MCP_ALLOWED_ORIGINS` value.
+
+The unauthenticated `/healthz` endpoint is available for container health checks;
+it does not expose MCP functionality.
 
 ### Kubernetes Authentication
 
@@ -424,6 +432,13 @@ The Docker image runs as a non-root user (`appuser` with UID 1001) for enhanced 
 - The kubeconfig should be mounted to `/home/appuser/.kube/config`
 - Health checks are enabled to monitor container status
 - The container includes minimal dependencies (ca-certificates and curl only)
+
+SSE and streamable HTTP are fail-closed unless `MCP_AUTH_TOKEN` is set. Never
+publish an HTTP transport without authentication. Prefer `stdio` for local MCP
+clients, use `--read-only` where possible, and grant the server's Kubernetes
+identity only the RBAC permissions it needs. A session ID is not an authentication
+credential. Put remotely accessible deployments behind TLS and an authenticating
+reverse proxy, and configure `MCP_ALLOWED_ORIGINS` for browser-based clients.
 
 #### Making API Calls (SSE/Streamable-HTTP Mode)
 Once the server is running in SSE or streamable-http mode, you can make JSON-RPC calls to its HTTP endpoint:

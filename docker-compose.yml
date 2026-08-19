@@ -38,7 +38,10 @@ services:
       
       # Server configuration
       - SERVER_MODE=sse # Explicitly set server mode (stdio, sse, or streamable-http)
+      - SERVER_HOST=0.0.0.0 # Explicit opt-in for container network access
       - SERVER_PORT=8080 # Explicitly set server port for SSE mode
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN must be set}
+      # - MCP_ALLOWED_ORIGINS=https://your-client.example
     # command: ["--read-only"] # Uncomment to enable read-only mode
     # command: ["--no-k8s"] # Uncomment to disable Kubernetes tools
     # command: ["--no-helm"] # Uncomment to disable Helm tools
@@ -46,7 +49,7 @@ services:
     restart: unless-stopped
     healthcheck:
       # Ensure 'curl' is installed in your Docker image (e.g., RUN apk --no-cache add curl in Dockerfile)
-      test: ["CMD", "curl", "-f", "-s", "http://localhost:8080/"] # Check if the server responds on the root path
+      test: ["CMD", "curl", "-f", "-s", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3

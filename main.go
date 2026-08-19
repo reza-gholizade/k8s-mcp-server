@@ -12,7 +12,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/reza-gholizade/k8s-mcp-server/handlers"
 	"github.com/reza-gholizade/k8s-mcp-server/pkg/helm"
@@ -27,13 +31,15 @@ import (
 func main() {
 	// Parse command line flags
 	var mode string
+	var host string
 	var port string
 	var readOnly bool
 	var noK8s bool
 	var noHelm bool
 
 	flag.StringVar(&port, "port", getEnvOrDefault("SERVER_PORT", "8080"), "Server port")
-	flag.StringVar(&mode, "mode", getEnvOrDefault("SERVER_MODE", "sse"), "Server mode: 'stdio', 'sse', or 'streamable-http'")
+	flag.StringVar(&host, "host", getEnvOrDefault("SERVER_HOST", "127.0.0.1"), "HTTP listen host")
+	flag.StringVar(&mode, "mode", getEnvOrDefault("SERVER_MODE", "stdio"), "Server mode: 'stdio', 'sse', or 'streamable-http'")
 	flag.BoolVar(&readOnly, "read-only", false, "Enable read-only mode (disables write operations)")
 	flag.BoolVar(&noK8s, "no-k8s", false, "Disable Kubernetes tools")
 	flag.BoolVar(&noHelm, "no-helm", false, "Disable Helm tools")
@@ -125,25 +131,65 @@ func main() {
 			return
 		}
 	case "sse":
-		fmt.Printf("Starting server in SSE mode on port %s...\n", port)
+		token, allowedOrigins, err := httpSecurityConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Refusing to start SSE server: %v\n", err)
+			os.Exit(1)
+		}
+		addr := net.JoinHostPort(host, port)
+		fmt.Printf("Starting authenticated SSE server on %s...\n", addr)
 		sse := server.NewSSEServer(s)
-		if err := sse.Start(":" + port); err != nil {
+		if err := serveHTTP(addr, secureMCPHandler(sse, token, allowedOrigins)); err != nil {
 			fmt.Printf("Failed to start SSE server: %v\n", err)
 			return
 		}
-		fmt.Printf("SSE server started on port %s\n", port)
 	case "streamable-http":
-		fmt.Printf("Starting server in streamable-http mode on port %s...\n", port)
+		token, allowedOrigins, err := httpSecurityConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Refusing to start streamable-http server: %v\n", err)
+			os.Exit(1)
+		}
+		addr := net.JoinHostPort(host, port)
+		fmt.Printf("Starting authenticated streamable-http server on %s...\n", addr)
 		streamableHTTP := server.NewStreamableHTTPServer(s, server.WithStateLess(true))
-		if err := streamableHTTP.Start(":" + port); err != nil {
+		if err := serveHTTP(addr, secureMCPHandler(streamableHTTP, token, allowedOrigins)); err != nil {
 			fmt.Printf("Failed to start streamable-http server: %v\n", err)
 			return
 		}
-		fmt.Printf("Streamable-http server started on port %s (endpoint: http://localhost:%s/mcp)\n", port, port)
 	default:
 		fmt.Printf("Unknown server mode: %s. Use 'stdio', 'sse', or 'streamable-http'.\n", mode)
 		return
 	}
+}
+
+func httpSecurityConfig() (string, []string, error) {
+	token := strings.TrimSpace(os.Getenv("MCP_AUTH_TOKEN"))
+	if len(token) < 32 {
+		return "", nil, fmt.Errorf("MCP_AUTH_TOKEN must contain at least 32 characters for HTTP transports")
+	}
+
+	var allowedOrigins []string
+	for _, origin := range strings.Split(os.Getenv("MCP_ALLOWED_ORIGINS"), ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			allowedOrigins = append(allowedOrigins, origin)
+		}
+	}
+	return token, allowedOrigins, nil
+}
+
+func serveHTTP(addr string, handler http.Handler) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.Handle("/", handler)
+
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return httpServer.ListenAndServe()
 }
 
 // getEnvOrDefault returns the value of the environment variable or the default value if not set
