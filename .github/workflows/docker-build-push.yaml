@@ -54,7 +54,7 @@ jobs:
           fi
           
           echo "Building for ${{ matrix.os }}/${{ matrix.arch }}"
-          go build -ldflags="-w -s" -o ${binary_name} main.go
+          go build -ldflags="-w -s" -o ${binary_name} .
           
           # Verify binary was created
           ls -la ${binary_name}
