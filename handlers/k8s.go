@@ -348,7 +348,7 @@ func CreateOrUpdateResourceYAML(client *k8s.Client) func(ctx context.Context, re
 			return nil, fmt.Errorf("invalid arguments type: expected map[string]interface{}")
 		}
 
-		yamlManifest, err := getRequiredStringArg(args, "manifest")
+		yamlManifest, err := getRequiredStringArg(args, "yamlManifest")
 		if err != nil {
 			return nil, err
 		}
