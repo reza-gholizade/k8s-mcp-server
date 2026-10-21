@@ -293,18 +293,10 @@ func (c *Client) CreateOrUpdateResourceJSON(ctx context.Context, namespace, mani
 	}
 
 	resource := c.dynamicClient.Resource(*gvr)
+	effectiveNamespace := resolveManifestNamespace(namespace, obj.GetNamespace(), namespaced)
+	obj.SetNamespace(effectiveNamespace)
 	if namespaced {
-		effectiveNamespace := namespace
-		if effectiveNamespace == "" {
-			effectiveNamespace = obj.GetNamespace()
-		}
-		if effectiveNamespace == "" {
-			effectiveNamespace = "default"
-		}
-		obj.SetNamespace(effectiveNamespace)
 		resource = c.dynamicClient.Resource(*gvr).Namespace(effectiveNamespace)
-	} else {
-		obj.SetNamespace("")
 	}
 
 	if obj.GetName() == "" {
@@ -352,18 +344,10 @@ func (c *Client) CreateOrUpdateResourceYAML(ctx context.Context, namespace, yaml
 	}
 
 	resource := c.dynamicClient.Resource(*gvr)
+	effectiveNamespace := resolveManifestNamespace(namespace, obj.GetNamespace(), namespaced)
+	obj.SetNamespace(effectiveNamespace)
 	if namespaced {
-		effectiveNamespace := namespace
-		if effectiveNamespace == "" {
-			effectiveNamespace = obj.GetNamespace()
-		}
-		if effectiveNamespace == "" {
-			effectiveNamespace = "default"
-		}
-		obj.SetNamespace(effectiveNamespace)
 		resource = c.dynamicClient.Resource(*gvr).Namespace(effectiveNamespace)
-	} else {
-		obj.SetNamespace("")
 	}
 
 	if obj.GetName() == "" {
@@ -404,6 +388,21 @@ func (c *Client) DeleteResource(ctx context.Context, kind, name, namespace strin
 		return fmt.Errorf("failed to delete resource: %w", deleteErr)
 	}
 	return nil
+}
+
+// resolveManifestNamespace applies the caller's namespace override, then the manifest
+// namespace, and finally the Kubernetes default namespace for namespaced resources.
+func resolveManifestNamespace(override, manifestNamespace string, namespaced bool) string {
+	if !namespaced {
+		return ""
+	}
+	if override != "" {
+		return override
+	}
+	if manifestNamespace != "" {
+		return manifestNamespace
+	}
+	return "default"
 }
 
 // isNamespacedResource reports whether a discovered Kubernetes resource is namespace-scoped.
