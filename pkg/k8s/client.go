@@ -264,6 +264,20 @@ func (c *Client) ListResources(ctx context.Context, kind, namespace, labelSelect
 	return resources, nil
 }
 
+// decodeManifestJSON decodes a manifest while preserving integer precision.
+// UseNumber prevents large integer fields (for example, int64 CRD values) from
+// being rounded through float64 before the manifest is sent as a patch or create.
+func decodeManifestJSON(data []byte, obj *unstructured.Unstructured) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var object map[string]interface{}
+	if err := decoder.Decode(&object); err != nil {
+		return err
+	}
+	obj.Object = object
+	return nil
+}
+
 // CreateOrUpdateResource creates a new resource or updates an existing one.
 // It parses the provided manifest string into an unstructured object.
 // It uses the dynamic client to first attempt an update, and if that fails
@@ -272,7 +286,7 @@ func (c *Client) ListResources(ctx context.Context, kind, namespace, labelSelect
 // Returns the unstructured content of the created/updated resource, or an error.
 func (c *Client) CreateOrUpdateResourceJSON(ctx context.Context, namespace, manifestJSON, kind string) (map[string]interface{}, error) {
 	obj := &unstructured.Unstructured{}
-	if err := json.Unmarshal([]byte(manifestJSON), &obj.Object); err != nil {
+	if err := decodeManifestJSON([]byte(manifestJSON), obj); err != nil {
 		return nil, fmt.Errorf("failed to parse resource manifest JSON: %w", err)
 	}
 
@@ -325,7 +339,7 @@ func (c *Client) CreateOrUpdateResourceYAML(ctx context.Context, namespace, yaml
 		return nil, fmt.Errorf("failed to parse YAML manifest: %w", err)
 	}
 	obj := &unstructured.Unstructured{}
-	if err := json.Unmarshal(jsonData, &obj.Object); err != nil {
+	if err := decodeManifestJSON(jsonData, obj); err != nil {
 		return nil, fmt.Errorf("failed to parse converted JSON from YAML manifest: %w", err)
 	}
 
