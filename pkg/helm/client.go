@@ -189,7 +189,7 @@ func (c *Client) InstallChart(ctx context.Context, namespace, releaseName, chart
 	return release, nil
 }
 
-func (c *Client) UpgradeChart(ctx context.Context, namespace, releaseName, chartName string, values map[string]interface{}) (*release.Release, error) {
+func (c *Client) UpgradeChart(ctx context.Context, namespace, releaseName, chartName, repoURL string, values map[string]interface{}) (*release.Release, error) {
 	actionConfig := &action.Configuration{}
 	if err := actionConfig.Init(c.restClientGetter, namespace, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
 		return nil, fmt.Errorf("failed to initialize action config: %w", err)
@@ -207,6 +207,9 @@ func (c *Client) UpgradeChart(ctx context.Context, namespace, releaseName, chart
 
 	client := action.NewUpgrade(actionConfig)
 	client.Namespace = namespace
+	if repoURL != "" {
+		client.RepoURL = repoURL
+	}
 
 	if values == nil {
 		values = make(map[string]interface{})

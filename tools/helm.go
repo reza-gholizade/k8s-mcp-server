@@ -28,7 +28,7 @@ func HelmUpgradeTool() mcp.Tool {
 		mcp.WithString("chartName", mcp.Required(), mcp.Description("Name or path of the Helm chart")),
 		mcp.WithString("namespace", mcp.Required(), mcp.Description("Kubernetes namespace of the release")),
 		mcp.WithObject("values", mcp.Required(), mcp.Description("Values to override in the chart")),
-		mcp.WithObject("repoURL", mcp.Required(), mcp.Description("URL of the Helm repository")),
+		mcp.WithString("repoURL", mcp.Description("Helm repository URL (optional)")),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Helm Upgrade",
 			DestructiveHint: mcp.ToBoolPtr(true),
