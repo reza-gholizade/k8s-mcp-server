@@ -1086,6 +1086,11 @@ You can customize the configuration by modifying the settings:
 }
 ```
 
+Set `KUBERNETES_CONTEXT` to select a context other than the kubeconfig's
+`current-context`. The override is supported with both `KUBECONFIG` file
+configuration and `KUBECONFIG_DATA` content. If it is unset or empty, the
+kubeconfig's current context is used.
+
 ### Troubleshooting
 
 - **Binary not found**: Ensure `k8s-mcp-server` is in your PATH
