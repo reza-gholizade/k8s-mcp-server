@@ -58,8 +58,13 @@ func BuildKubernetesConfig(kubeconfigPath string) (*rest.Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load kubeconfig from KUBECONFIG_DATA: %w", err)
 		}
+		// Apply an optional context override consistently with file-based kubeconfigs.
+		overrides := &clientcmd.ConfigOverrides{}
+		if contextName := os.Getenv("KUBERNETES_CONTEXT"); contextName != "" {
+			overrides.CurrentContext = contextName
+		}
 		// Build REST config from the loaded config
-		clientConfig := clientcmd.NewDefaultClientConfig(*configObj, &clientcmd.ConfigOverrides{})
+		clientConfig := clientcmd.NewDefaultClientConfig(*configObj, overrides)
 		config, err := clientConfig.ClientConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build REST config from KUBECONFIG_DATA: %w", err)
@@ -118,7 +123,18 @@ func BuildKubernetesConfig(kubeconfigPath string) (*rest.Config, error) {
 		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	// Use clientcmd loading rules and overrides so KUBERNETES_CONTEXT can select
+	// a non-current context for both explicit paths and the default kubeconfig.
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.ExplicitPath = kubeconfig
+	}
+	overrides := &clientcmd.ConfigOverrides{}
+	if contextName := os.Getenv("KUBERNETES_CONTEXT"); contextName != "" {
+		overrides.CurrentContext = contextName
+	}
+	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+	config, err := clientConfig.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes configuration: %w", err)
 	}
