@@ -312,35 +312,50 @@ func parseHelmRevision(args map[string]interface{}) (int, error) {
 	}
 
 	invalid := func(value interface{}) (int, error) {
-		return 0, fmt.Errorf("invalid revision %v: must be a non-negative integer", value)
+		return 0, fmt.Errorf("invalid revision %v: must be a non-negative integer within the supported range", value)
 	}
+	maxInt := int(^uint(0) >> 1)
+
 	switch rev := rawRevision.(type) {
 	case float64:
-		if rev < 0 || rev != float64(int64(rev)) {
+		// Reject NaN/Inf and values outside int range before converting. The
+		// >= boundary also avoids float64 rounding maxInt up to 2^63 on 64-bit.
+		if rev < 0 || rev >= float64(maxInt) || rev != float64(int64(rev)) {
 			return invalid(rev)
 		}
 		return int(rev), nil
 	case float32:
-		if rev < 0 || rev != float32(int64(rev)) {
+		value := float64(rev)
+		if value < 0 || value >= float64(maxInt) || value != float64(int64(value)) {
+			return invalid(rev)
+		}
+		return int(value), nil
+	case int:
+		if rev < 0 {
+			return invalid(rev)
+		}
+		return rev, nil
+	case int32:
+		if rev < 0 || int64(rev) > int64(maxInt) {
 			return invalid(rev)
 		}
 		return int(rev), nil
-	case int:
-		if rev < 0 { return invalid(rev) }
-		return rev, nil
-	case int32:
-		if rev < 0 { return invalid(rev) }
-		return int(rev), nil
 	case int64:
-		if rev < 0 { return invalid(rev) }
+		if rev < 0 || rev > int64(maxInt) {
+			return invalid(rev)
+		}
 		return int(rev), nil
 	case json.Number:
 		parsed, err := strconv.Atoi(string(rev))
-		if err != nil || parsed < 0 { return invalid(rev) }
+		if err != nil || parsed < 0 {
+			return invalid(rev)
+		}
 		return parsed, nil
 	case string:
 		parsed, err := strconv.Atoi(rev)
-		if err != nil || parsed < 0 { return invalid(rev) }
+		if err != nil || parsed < 0 {
+			return invalid(rev)
+		}
 		return parsed, nil
 	default:
 		return 0, fmt.Errorf("invalid revision type %T: must be a non-negative integer", rawRevision)
