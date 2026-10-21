@@ -271,151 +271,116 @@ func (c *Client) ListResources(ctx context.Context, kind, namespace, labelSelect
 // Requires the resource manifest to include a name.
 // Returns the unstructured content of the created/updated resource, or an error.
 func (c *Client) CreateOrUpdateResourceJSON(ctx context.Context, namespace, manifestJSON, kind string) (map[string]interface{}, error) {
-	// Decode JSON into unstructured object directly (no YAML conversion)
-
 	obj := &unstructured.Unstructured{}
 	if err := json.Unmarshal([]byte(manifestJSON), &obj.Object); err != nil {
 		return nil, fmt.Errorf("failed to parse resource manifest JSON: %w", err)
 	}
 
-	// Determine the resource GVR
-	gvr, err := c.getCachedGVR(kind)
+	resourceKind := kind
+	if resourceKind == "" {
+		resourceKind = obj.GetKind()
+	}
+	if resourceKind == "" {
+		return nil, fmt.Errorf("resource kind is required: provide kind or include it in the manifest")
+	}
+	gvr, err := c.getCachedGVR(resourceKind)
+	if err != nil {
+		return nil, err
+	}
+	namespaced, err := c.isNamespacedResource(*gvr)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if ns exists
-	_, err = c.clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-	if err == nil {
-		fmt.Printf("Namespace %s exists\n", namespace)
+	resource := c.dynamicClient.Resource(*gvr)
+	if namespaced {
+		effectiveNamespace := namespace
+		if effectiveNamespace == "" {
+			effectiveNamespace = obj.GetNamespace()
+		}
+		if effectiveNamespace == "" {
+			effectiveNamespace = "default"
+		}
+		obj.SetNamespace(effectiveNamespace)
+		resource = c.dynamicClient.Resource(*gvr).Namespace(effectiveNamespace)
+	} else {
+		obj.SetNamespace("")
 	}
-	if errors.IsNotFound(err) {
-		fmt.Printf("Namespace %s does not exist, creating one\n", namespace)
-		_, err = c.clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels: map[string]string{
-					"kubernetes.io/metadata.name": namespace,
-				},
-				Name: namespace,
-			},
-			Spec: corev1.NamespaceSpec{
-				Finalizers: []corev1.FinalizerName{corev1.FinalizerKubernetes},
-			},
-			Status: corev1.NamespaceStatus{
-				Phase:      corev1.NamespaceActive,
-				Conditions: nil,
-			},
-		}, metav1.CreateOptions{})
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve namespace resource: %w", err)
-	}
-
-	obj.SetNamespace(namespace)
 
 	if obj.GetName() == "" {
 		return nil, fmt.Errorf("resource name is required")
 	}
+	patchJSON, err := json.Marshal(obj.Object)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode resource manifest: %w", err)
+	}
 
-	resource := c.dynamicClient.Resource(*gvr).Namespace(obj.GetNamespace())
-
-	// Try to patch; if not found, create
-	rawJSON := []byte(manifestJSON) // manifestJSON is already JSON
-	result, err := resource.Patch(
-		ctx,
-		obj.GetName(),
-		types.MergePatchType,
-		rawJSON,
-		metav1.PatchOptions{},
-	)
+	result, err := resource.Patch(ctx, obj.GetName(), types.MergePatchType, patchJSON, metav1.PatchOptions{})
 	if errors.IsNotFound(err) {
 		result, err = resource.Create(ctx, obj, metav1.CreateOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or patch resource: %w", err)
 	}
-
 	return result.UnstructuredContent(), nil
 }
 
-// CreateOrUpdateResourceYAML creates a new resource or updates an existing one from a YAML manifest.
-// This function is specifically designed for YAML input and provides optimized YAML parsing.
-// It converts the YAML manifest to JSON internally and then uses the dynamic client
-// to first attempt an update, and if that fails (e.g., resource not found), it attempts to create the resource.
-// Requires the resource manifest to include a name.
-// Returns the unstructured content of the created/updated resource, or an error.
-//
-// Parameters:
-//   - ctx: Context for the operation
-//   - namespace: Target namespace for the resource (overrides manifest namespace if provided)
-//   - yamlManifest: YAML manifest string of the Kubernetes resource
-//   - kind: Resource kind (optional, will be inferred from manifest if empty)
-//
-// Example YAML manifest:
-//
-//	apiVersion: v1
-//	kind: Pod
-//	metadata:
-//	  name: my-pod
-//	  namespace: default
-//	spec:
-//	  containers:
-//	  - name: nginx
-//	    image: nginx:latest
 func (c *Client) CreateOrUpdateResourceYAML(ctx context.Context, namespace, yamlManifest, kind string) (map[string]interface{}, error) {
-	// Convert YAML to JSON
 	jsonData, err := yaml.YAMLToJSON([]byte(yamlManifest))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse YAML manifest: %w", err)
 	}
-
-	// Parse the converted JSON into unstructured object
 	obj := &unstructured.Unstructured{}
 	if err := json.Unmarshal(jsonData, &obj.Object); err != nil {
 		return nil, fmt.Errorf("failed to parse converted JSON from YAML manifest: %w", err)
 	}
 
-	// Infer kind from manifest if not provided
 	resourceKind := kind
 	if resourceKind == "" {
 		resourceKind = obj.GetKind()
-		if resourceKind == "" {
-			return nil, fmt.Errorf("resource kind is required: either provide it as a parameter or include it in the YAML manifest")
-		}
 	}
-
-	// Determine the resource GVR
+	if resourceKind == "" {
+		return nil, fmt.Errorf("resource kind is required: provide kind or include it in the manifest")
+	}
 	gvr, err := c.getCachedGVR(resourceKind)
 	if err != nil {
 		return nil, err
 	}
+	namespaced, err := c.isNamespacedResource(*gvr)
+	if err != nil {
+		return nil, err
+	}
 
-	// Set namespace if provided (overrides manifest namespace)
-	if namespace != "" {
-		obj.SetNamespace(namespace)
+	resource := c.dynamicClient.Resource(*gvr)
+	if namespaced {
+		effectiveNamespace := namespace
+		if effectiveNamespace == "" {
+			effectiveNamespace = obj.GetNamespace()
+		}
+		if effectiveNamespace == "" {
+			effectiveNamespace = "default"
+		}
+		obj.SetNamespace(effectiveNamespace)
+		resource = c.dynamicClient.Resource(*gvr).Namespace(effectiveNamespace)
+	} else {
+		obj.SetNamespace("")
 	}
 
 	if obj.GetName() == "" {
 		return nil, fmt.Errorf("resource name is required in YAML manifest")
 	}
+	patchJSON, err := json.Marshal(obj.Object)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode YAML resource manifest: %w", err)
+	}
 
-	resource := c.dynamicClient.Resource(*gvr).Namespace(obj.GetNamespace())
-
-	// Try to patch; if not found, create
-	result, err := resource.Patch(
-		ctx,
-		obj.GetName(),
-		types.MergePatchType,
-		jsonData,
-		metav1.PatchOptions{},
-	)
+	result, err := resource.Patch(ctx, obj.GetName(), types.MergePatchType, patchJSON, metav1.PatchOptions{})
 	if errors.IsNotFound(err) {
 		result, err = resource.Create(ctx, obj, metav1.CreateOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create or patch resource from YAML manifest: %w", err)
 	}
-
 	return result.UnstructuredContent(), nil
 }
 
@@ -439,6 +404,20 @@ func (c *Client) DeleteResource(ctx context.Context, kind, name, namespace strin
 		return fmt.Errorf("failed to delete resource: %w", deleteErr)
 	}
 	return nil
+}
+
+// isNamespacedResource reports whether a discovered Kubernetes resource is namespace-scoped.
+func (c *Client) isNamespacedResource(gvr schema.GroupVersionResource) (bool, error) {
+	resourceList, err := c.discoveryClient.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
+	if err != nil {
+		return false, fmt.Errorf("failed to discover resource scope for %s: %w", gvr.String(), err)
+	}
+	for _, resource := range resourceList.APIResources {
+		if resource.Name == gvr.Resource {
+			return resource.Namespaced, nil
+		}
+	}
+	return false, fmt.Errorf("resource %s not found in API discovery response", gvr.String())
 }
 
 // getCachedGVR retrieves the GroupVersionResource for a given kind, using a cache for performance
