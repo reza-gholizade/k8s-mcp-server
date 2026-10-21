@@ -225,52 +225,9 @@ func HelmRollback(client *helm.Client) func(ctx context.Context, request mcp.Cal
 
 		namespace := getStringArg(args, "namespace", "default")
 
-		// MCP JSON numbers are decoded as float64. Accept integer-valued numeric
-		// types (and strings for compatibility), but never silently turn invalid
-		// input into revision 0 because that means "previous revision" in Helm.
-		revision := 0
-		if rawRevision, exists := args["revision"]; exists && rawRevision != nil {
-			switch rev := rawRevision.(type) {
-			case float64:
-				if rev < 0 || rev != float64(int64(rev)) {
-					return nil, fmt.Errorf("invalid revision %v: must be a non-negative integer", rev)
-				}
-				revision = int(rev)
-			case float32:
-				if rev < 0 || rev != float32(int64(rev)) {
-					return nil, fmt.Errorf("invalid revision %v: must be a non-negative integer", rev)
-				}
-				revision = int(rev)
-			case int:
-				if rev < 0 {
-					return nil, fmt.Errorf("invalid revision %d: must be a non-negative integer", rev)
-				}
-				revision = rev
-			case int32:
-				if rev < 0 {
-					return nil, fmt.Errorf("invalid revision %d: must be a non-negative integer", rev)
-				}
-				revision = int(rev)
-			case int64:
-				if rev < 0 {
-					return nil, fmt.Errorf("invalid revision %d: must be a non-negative integer", rev)
-				}
-				revision = int(rev)
-			case json.Number:
-				parsed, err := strconv.Atoi(string(rev))
-				if err != nil || parsed < 0 {
-					return nil, fmt.Errorf("invalid revision %q: must be a non-negative integer", rev)
-				}
-				revision = parsed
-			case string:
-				parsed, err := strconv.Atoi(rev)
-				if err != nil || parsed < 0 {
-					return nil, fmt.Errorf("invalid revision %q: must be a non-negative integer", rev)
-				}
-				revision = parsed
-			default:
-				return nil, fmt.Errorf("invalid revision type %T: must be a non-negative integer", rawRevision)
-			}
+		revision, err := parseHelmRevision(args)
+		if err != nil {
+			return nil, err
 		}
 
 		err = client.RollbackRelease(ctx, namespace, releaseName, revision)
@@ -343,5 +300,49 @@ func HelmRepoList(client *helm.Client) func(ctx context.Context, request mcp.Cal
 		}
 
 		return mcp.NewToolResultText(string(jsonResponse)), nil
+	}
+}
+
+// parseHelmRevision accepts the numeric JSON representations used by MCP clients.
+// Revision 0 has Helm's documented meaning of "previous revision".
+func parseHelmRevision(args map[string]interface{}) (int, error) {
+	rawRevision, exists := args["revision"]
+	if !exists || rawRevision == nil {
+		return 0, fmt.Errorf("missing required parameter: revision")
+	}
+
+	invalid := func(value interface{}) (int, error) {
+		return 0, fmt.Errorf("invalid revision %v: must be a non-negative integer", value)
+	}
+	switch rev := rawRevision.(type) {
+	case float64:
+		if rev < 0 || rev != float64(int64(rev)) {
+			return invalid(rev)
+		}
+		return int(rev), nil
+	case float32:
+		if rev < 0 || rev != float32(int64(rev)) {
+			return invalid(rev)
+		}
+		return int(rev), nil
+	case int:
+		if rev < 0 { return invalid(rev) }
+		return rev, nil
+	case int32:
+		if rev < 0 { return invalid(rev) }
+		return int(rev), nil
+	case int64:
+		if rev < 0 { return invalid(rev) }
+		return int(rev), nil
+	case json.Number:
+		parsed, err := strconv.Atoi(string(rev))
+		if err != nil || parsed < 0 { return invalid(rev) }
+		return parsed, nil
+	case string:
+		parsed, err := strconv.Atoi(rev)
+		if err != nil || parsed < 0 { return invalid(rev) }
+		return parsed, nil
+	default:
+		return 0, fmt.Errorf("invalid revision type %T: must be a non-negative integer", rawRevision)
 	}
 }
