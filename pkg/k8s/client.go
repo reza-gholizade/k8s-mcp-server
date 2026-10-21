@@ -125,9 +125,13 @@ func BuildKubernetesConfig(kubeconfigPath string) (*rest.Config, error) {
 
 	// Use clientcmd loading rules and overrides so KUBERNETES_CONTEXT can select
 	// a non-current context for both explicit paths and the default kubeconfig.
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	var loadingRules *clientcmd.ClientConfigLoadingRules
 	if kubeconfig != "" {
-		loadingRules.ExplicitPath = kubeconfig
+		// An explicitly selected kubeconfig must not trigger migration of the
+		// legacy default kubeconfig as a side effect of loading this file.
+		loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+	} else {
+		loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
 	}
 	overrides := &clientcmd.ConfigOverrides{}
 	if contextName := os.Getenv("KUBERNETES_CONTEXT"); contextName != "" {
