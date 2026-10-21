@@ -292,11 +292,13 @@ func (c *Client) CreateOrUpdateResourceJSON(ctx context.Context, namespace, mani
 		return nil, err
 	}
 
-	resource := c.dynamicClient.Resource(*gvr)
+	var resource dynamic.ResourceInterface
 	effectiveNamespace := resolveManifestNamespace(namespace, obj.GetNamespace(), namespaced)
 	obj.SetNamespace(effectiveNamespace)
 	if namespaced {
 		resource = c.dynamicClient.Resource(*gvr).Namespace(effectiveNamespace)
+	} else {
+		resource = c.dynamicClient.Resource(*gvr)
 	}
 
 	if obj.GetName() == "" {
@@ -343,11 +345,13 @@ func (c *Client) CreateOrUpdateResourceYAML(ctx context.Context, namespace, yaml
 		return nil, err
 	}
 
-	resource := c.dynamicClient.Resource(*gvr)
+	var resource dynamic.ResourceInterface
 	effectiveNamespace := resolveManifestNamespace(namespace, obj.GetNamespace(), namespaced)
 	obj.SetNamespace(effectiveNamespace)
 	if namespaced {
 		resource = c.dynamicClient.Resource(*gvr).Namespace(effectiveNamespace)
+	} else {
+		resource = c.dynamicClient.Resource(*gvr)
 	}
 
 	if obj.GetName() == "" {
