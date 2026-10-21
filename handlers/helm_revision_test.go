@@ -2,14 +2,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 )
 
 func TestParseHelmRevision(t *testing.T) {
 	tests := []struct {
-		name string
-		args map[string]interface{}
-		want int
+		name    string
+		args    map[string]interface{}
+		want    int
 		wantErr bool
 	}{
 		{name: "MCP JSON number", args: map[string]interface{}{"revision": float64(3)}, want: 3},
@@ -18,10 +19,15 @@ func TestParseHelmRevision(t *testing.T) {
 		{name: "json number", args: map[string]interface{}{"revision": json.Number("5")}, want: 5},
 		{name: "numeric string compatibility", args: map[string]interface{}{"revision": "6"}, want: 6},
 		{name: "missing", args: map[string]interface{}{}, wantErr: true},
+		{name: "null", args: map[string]interface{}{"revision": nil}, wantErr: true},
 		{name: "negative", args: map[string]interface{}{"revision": float64(-1)}, wantErr: true},
 		{name: "fractional", args: map[string]interface{}{"revision": float64(1.5)}, wantErr: true},
+		{name: "NaN", args: map[string]interface{}{"revision": math.NaN()}, wantErr: true},
+		{name: "positive infinity", args: map[string]interface{}{"revision": math.Inf(1)}, wantErr: true},
+		{name: "out of range float", args: map[string]interface{}{"revision": math.Exp2(63)}, wantErr: true},
 		{name: "wrong type", args: map[string]interface{}{"revision": true}, wantErr: true},
 		{name: "invalid string", args: map[string]interface{}{"revision": "abc"}, wantErr: true},
+		{name: "fractional json number", args: map[string]interface{}{"revision": json.Number("3.0")}, wantErr: true},
 	}
 
 	for _, tt := range tests {
