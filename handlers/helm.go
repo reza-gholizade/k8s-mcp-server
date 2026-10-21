@@ -72,6 +72,7 @@ func HelmUpgrade(client *helm.Client) func(ctx context.Context, request mcp.Call
 		}
 
 		namespace := getStringArg(args, "namespace", "default")
+		repoURL := getStringArg(args, "repoURL", "")
 
 		values := make(map[string]interface{})
 		if v, exists := args["values"]; exists {
@@ -80,7 +81,7 @@ func HelmUpgrade(client *helm.Client) func(ctx context.Context, request mcp.Call
 			}
 		}
 
-		release, err := client.UpgradeChart(ctx, namespace, releaseName, chartName, values)
+		release, err := client.UpgradeChart(ctx, namespace, releaseName, chartName, repoURL, values)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upgrade chart: %w", err)
 		}
