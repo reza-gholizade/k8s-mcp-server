@@ -59,7 +59,7 @@ func BuildKubernetesConfig(kubeconfigPath string) (*rest.Config, error) {
 			return nil, fmt.Errorf("failed to load kubeconfig from KUBECONFIG_DATA: %w", err)
 		}
 		// Build REST config from the loaded config
-		clientConfig := clientcmd.NewDefaultClientConfig(*configObj, &clientcmd.ConfigOverrides{})
+		clientConfig := clientcmd.NewDefaultClientConfig(*configObj, contextOverrides())
 		config, err := clientConfig.ClientConfig()
 		if err != nil {
 			return nil, fmt.Errorf("failed to build REST config from KUBECONFIG_DATA: %w", err)
@@ -118,12 +118,30 @@ func BuildKubernetesConfig(kubeconfigPath string) (*rest.Config, error) {
 		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
 
+	if os.Getenv("KUBERNETES_CONTEXT") != "" {
+		clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig},
+			contextOverrides(),
+		)
+		config, err := clientConfig.ClientConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Kubernetes configuration: %w", err)
+		}
+		return config, nil
+	}
+
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes configuration: %w", err)
 	}
 
 	return config, nil
+}
+
+// contextOverrides selects the kubeconfig context named by KUBERNETES_CONTEXT.
+// When the variable is empty, the kubeconfig's current context is used.
+func contextOverrides() *clientcmd.ConfigOverrides {
+	return &clientcmd.ConfigOverrides{CurrentContext: os.Getenv("KUBERNETES_CONTEXT")}
 }
 
 // NewClient creates a new Kubernetes client.
