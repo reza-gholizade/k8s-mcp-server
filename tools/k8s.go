@@ -151,7 +151,7 @@ func CreateOrUpdateResourceJSONTool() mcp.Tool {
 	return mcp.NewTool(
 		"createResource",
 		mcp.WithDescription("Create a resource in the Kubernetes cluster"),
-		mcp.WithString("kind", mcp.Required(), mcp.Description("The type of resource to create")),
+		mcp.WithString("kind", mcp.Description("The type of resource to create (optional, will be inferred from JSON manifest if not provided)")),
 		mcp.WithString("namespace", mcp.Description("The namespace of the resource")),
 		mcp.WithString("manifest", mcp.Required(), mcp.Description("The manifest of the resource to create")),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
